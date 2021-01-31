@@ -7,7 +7,7 @@ import time
 
 class SocketTime:
     def __init__(self, time):
-        """Convert time to h, m, and s format."""
+        """Convert time to d, h, m, and s format."""
         try:
             time = int(time)
         except ValueError:
@@ -32,7 +32,7 @@ class DiscordDispatch(commands.Converter):
     # idk what to call this
     async def convert(self, ctx, argument):
         """Convert OPCode"""
-        self._response_cache = ctx.bot.cogs['useful']._response_cache
+        self._response_cache = ctx.cog._response_cache
 
         if argument in ('recent', 'r'):
             return argument
@@ -46,7 +46,7 @@ class DiscordDispatch(commands.Converter):
             f'invalid sequence number\nthere are {len(self._response_cache)} events in cache')
 
 
-class useful(commands.Cog):
+class Useful(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
@@ -114,8 +114,8 @@ class useful(commands.Cog):
     @commands.command()
     async def source(self, ctx):
         """Shows bot's source code"""
-        await ctx.send('https://github.com/NotKino/KonoBot')
+        await ctx.send('<https://github.com/NotKino/KonoBot>')
 
 
 def setup(bot):
-    bot.add_cog(useful(bot))
+    bot.add_cog(Useful(bot))

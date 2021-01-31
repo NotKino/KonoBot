@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncpg
 import asyncio
 
-from utils import overwrites
+from utils import methods
 
 import os
 from os.path import join, dirname

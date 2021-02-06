@@ -11,7 +11,7 @@ class SocketTime:
         try:
             time = int(time)
         except ValueError:
-            raise commands.BadArgument(f'{time} is not an integer.')
+            raise commands.BadArgument(f'{time} is not a valid time.')
 
         if time >= 86400:
             # lol
@@ -59,6 +59,12 @@ class Useful(commands.Cog):
         else:
             raise error
 
+    @commands.Cog.listener('on_disconnect')
+    async def cache_clear(self):
+        """Clear cache if ws discconnect."""
+        # Disconnect might fuck up our sequence
+        self._response_cache = list()
+
     @commands.Cog.listener('on_socket_response')
     async def socket_listener(self, message):
         """Listen for socket events, append to cache"""
@@ -68,7 +74,7 @@ class Useful(commands.Cog):
         self._response_cache.append(message)
 
     @commands.command(
-        aliases=['ss', 'show ss'], help='Shows most recent socket event statistics'
+        aliases=('ss', 'show ss',), help='Shows most recent socket event statistics'
     )
     async def socketstats(self, ctx, response: DiscordDispatch = None):
         # horrid
@@ -98,11 +104,7 @@ class Useful(commands.Cog):
         op = response.get('op')
         event = response.get('t')
         when = SocketTime.convert(time.time() - response['when']).time
-
-        if op != 0:
-            keys = None
-        else:
-            keys = len(response['d'].keys())
+        keys = len(response['d'].keys())
 
         embed = discord.Embed(
             title=f'**{event}**',
@@ -111,7 +113,7 @@ class Useful(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command()
+    @commands.command(aliases=('src',))
     async def source(self, ctx):
         """Shows bot's source code"""
         await ctx.send('<https://github.com/NotKino/KonoBot>')

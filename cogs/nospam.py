@@ -22,9 +22,10 @@ class NoSpam(commands.Cog):
         elif message.author.id == self.bot.owner_id:
             # We want to reset if debugging
             try:
-            	self.bucket.reset()
+                self.bucket.reset()
             except AttributeError:
-            	pass
+                pass
+
 
 def setup(bot):
     bot.add_cog(NoSpam(bot))

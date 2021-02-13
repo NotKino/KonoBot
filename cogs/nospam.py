@@ -16,8 +16,8 @@ class NoSpam(commands.Cog):
             self.bucket = self.spam.get_bucket(message)
             updated = self.bucket.update_rate_limit()
             if updated:
-                print('Bot is spamming; logging out.')
                 await self.bot.logout()
+                print('Bot is spammed.')
 
         elif message.author.id == self.bot.owner_id:
             # We want to reset if debugging

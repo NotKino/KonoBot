@@ -4,6 +4,8 @@ from discord.ext import commands
 import datetime
 import time
 
+import typing
+
 
 class SocketTime:
     def __init__(self, time):
@@ -52,10 +54,77 @@ class Useful(commands.Cog):
         self.bot = bot
         self._response_cache = list()
 
+    def _get_obj_channel(self, obj):
+        if hasattr(obj, 'channel'):
+            return obj.channel.id
+        return None
+
+    def _get_obj_guild(self, obj):
+        if hasattr(obj, 'guild'):
+            return obj.guild.id
+        return None
+
+    async def find_type(self, ctx, object_id):
+
+        bot = ctx.bot
+        http = ctx.bot.http
+
+        if not commands.IDConverter()._get_id_match(str(object_id)):
+            return None
+
+        async def fetch_type(object):
+
+            types = {
+                discord.abc.GuildChannel: http.get_channel(object.id),
+                discord.Emoji: http.get_custom_emoji(self._get_obj_guild(object), object.id),
+                discord.Message: http.get_message(self._get_obj_channel(object), object.id),
+                discord.User: http.get_user(object.id),
+            }
+            if isinstance(object, discord.abc.GuildChannel):
+                return await types.get(discord.abc.GuildChannel)
+
+            return await types.get(type(object))
+
+        # finds object type
+        # if type is lower priority
+        # we rely on cache
+
+        object = bot.get_channel(object_id)
+        if object:
+            return await fetch_type(object)
+        object = bot.get_emoji(object_id)
+        if object:
+            return await fetch_type(object)
+        object = bot.get_message(object_id)
+        if object:
+            return await fetch_type(object)
+        object = bot.get_user(object_id)
+        if object:
+            return await fetch_type(object)
+
+        try:
+            return await http.get_message(ctx.channel.id, object_id)
+        except discord.NotFound:
+            pass
+        try:
+            return await http.get_channel(object_id)
+        except discord.NotFound:
+            pass
+        try:
+            return await http.get_user(object_id)
+        except discord.NotFound:
+            pass
+
+        return None
+
     async def cog_command_error(self, ctx, error):
 
-        if isinstance(error, commands.errors.ConversionError):
-            await ctx.send(error.original)
+        if isinstance(error, (commands.ConversionError, commands.BadArgument)):
+            await ctx.send(error.__cause__)
+        elif isinstance(error, commands.CommandOnCooldown):
+            if ctx.author.id == ctx.bot.owner_id:
+                return await ctx.reinvoke()
+            await ctx.send(error)
         else:
             raise error
 
@@ -74,7 +143,7 @@ class Useful(commands.Cog):
         self._response_cache.append(message)
 
     @commands.command(
-        aliases=('ss', 'show ss',), help='Shows most recent socket event statistics'
+        aliases=('ss', 'show ss',), help='Shows most recent socket event statistics.'
     )
     async def socketstats(self, ctx, response: DiscordDispatch = None):
         # horrid
@@ -113,9 +182,112 @@ class Useful(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @commands.group(
+        help='Shows raw data of different discord objects.', invoke_without_command=True, case_insensitive=True
+    )
+    async def raw(self, ctx):
+        await ctx.send_help(ctx.command)
+
+    @raw.command(
+        aliases=('m', 'msg',), help='Retrives raw data of a message.\n The Message\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def message(self, ctx, message_id: int, channel_id: typing.Optional[commands.TextChannelConverter]):
+        if not channel_id:
+            channel_id = ctx.channel
+        channel_id = channel_id.id
+
+        try:
+            data = await ctx.bot.http.get_message(channel_id, message_id)
+        except discord.NotFound:
+            await ctx.send('not found')
+        except discord.HTTPException:
+            await ctx.send('no lol')
+        else:
+            await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @raw.command(
+        aliases=('u',), help='Retrives raw data of a user.\nThe user\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def user(self, ctx, user_id: typing.Optional[int]):
+        if not user_id:
+            user_id = ctx.author.id
+
+        try:
+            data = await ctx.bot.http.get_user(user_id)
+        except discord.NotFound:
+            await ctx.send('not found')
+        except discord.HTTPException as exc:
+            await ctx.send(f'no lol: {exc}')
+        else:
+            await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @raw.command(
+        aliases=('mem',), help='Retrives raw data of a member.\nSimilar to user\nThe member\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def member(self, ctx, member_id: typing.Optional[int]):
+        if not member_id:
+            member_id = ctx.author.id
+        guild_id = ctx.guild.id
+
+        try:
+            data = await ctx.bot.http.get_member(guild_id, member_id)
+        except discord.NotFound:
+            await ctx.send('not found')
+        except discord.HTTPException as exc:
+            await ctx.send(f'no lol: {exc}')
+        else:
+            await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @raw.command(
+        aliases=('c', 'chan',), help='Retrives raw data of a channel.\nThe channel\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def channel(self, ctx, channel_id: typing.Optional[int]):
+        if not channel_id:
+            channel_id = ctx.channel.id
+
+        try:
+            data = await ctx.bot.http.get_channel(channel_id)
+        except discord.NotFound:
+            await ctx.send('not found')
+        except discord.HTTPException as exc:
+            await ctx.send(f'no lol: {exc}')
+        else:
+            await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @raw.command(
+        aliases=('e', 'emo',), help='Retrives raw data of a custom emoji.\nThe emoji\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def emoji(self, ctx, emoji_id: typing.Optional[int]):
+        guild_id = ctx.guild.id
+
+        try:
+            data = await ctx.bot.http.get_custom_emoji(guild_id, emoji_id)
+        except discord.NotFound:
+            await ctx.send('not found')
+        except discord.HTTPException as exc:
+            await ctx.send(f'no lol: {exc}')
+        else:
+            await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @raw.command(
+        aliases=('f', 'search', 's',), help='Retrives raw data of a channel/emoji/message/user object.\nThe object\'s ID must be passed.',
+    )
+    @commands.cooldown(1, 60, commands.BucketType.user)
+    async def find(self, ctx, object_id: int):
+
+        async with ctx.typing():
+            data = await self.find_type(ctx, object_id)
+        if not data:
+            return await ctx.send(f'``{object_id}``: Not found.')
+        await ctx.send(discord.utils.escape_markdown(str(data)))
+
     @commands.command(aliases=('src',))
     async def source(self, ctx):
-        """Shows bot's source code"""
         await ctx.send('<https://github.com/NotKino/KonoBot>')
 
 

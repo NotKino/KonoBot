@@ -64,6 +64,7 @@ class Kono(commands.Bot):
 intents = discord.Intents.default()
 intents.voice_states = False
 intents.typing = False
+intents.members = True
 
 kwargs = {
     'status': discord.Status.idle, 'intents': intents,

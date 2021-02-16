@@ -4,6 +4,7 @@ from discord.ext import commands
 import datetime
 import time
 
+import ast
 import typing
 
 
@@ -47,75 +48,21 @@ class DiscordDispatch(commands.Converter):
         raise Exception(
             f'invalid sequence number\nthere are {len(self._response_cache)} events in cache')
 
+class RawData(commands.Converter):
+    async def convert(self, ctx, argument):
+        
+        try:
+            return ast.literal_eval(argument)
+        except SyntaxError:
+            raise Exception(
+                'Invalid raw data.'
+            )
 
 class Useful(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
         self._response_cache = list()
-
-    def _get_obj_channel(self, obj):
-        if hasattr(obj, 'channel'):
-            return obj.channel.id
-        return None
-
-    def _get_obj_guild(self, obj):
-        if hasattr(obj, 'guild'):
-            return obj.guild.id
-        return None
-
-    async def find_type(self, ctx, object_id):
-
-        bot = ctx.bot
-        http = ctx.bot.http
-
-        if not commands.IDConverter()._get_id_match(str(object_id)):
-            return None
-
-        async def fetch_type(object):
-
-            types = {
-                discord.abc.GuildChannel: http.get_channel(object.id),
-                discord.Emoji: http.get_custom_emoji(self._get_obj_guild(object), object.id),
-                discord.Message: http.get_message(self._get_obj_channel(object), object.id),
-                discord.User: http.get_user(object.id),
-            }
-            if isinstance(object, discord.abc.GuildChannel):
-                return await types.get(discord.abc.GuildChannel)
-
-            return await types.get(type(object))
-
-        # finds object type
-        # if type is lower priority
-        # we rely on cache
-
-        object = bot.get_channel(object_id)
-        if object:
-            return await fetch_type(object)
-        object = bot.get_emoji(object_id)
-        if object:
-            return await fetch_type(object)
-        object = bot.get_message(object_id)
-        if object:
-            return await fetch_type(object)
-        object = bot.get_user(object_id)
-        if object:
-            return await fetch_type(object)
-
-        try:
-            return await http.get_message(ctx.channel.id, object_id)
-        except discord.NotFound:
-            pass
-        try:
-            return await http.get_channel(object_id)
-        except discord.NotFound:
-            pass
-        try:
-            return await http.get_user(object_id)
-        except discord.NotFound:
-            pass
-
-        return None
 
     async def cog_command_error(self, ctx, error):
 
@@ -141,6 +88,70 @@ class Useful(commands.Cog):
             return
         message['when'] = time.time()
         self._response_cache.append(message)
+
+
+    async def find_type(self, ctx, object_id):
+
+        bot = ctx.bot
+        http = ctx.bot.http
+
+        if not commands.IDConverter()._get_id_match(str(object_id)):
+            return None
+
+        # finds object type
+        # if type is lower priority
+        # we rely on cache
+
+        object = bot.get_channel(object_id)
+        if object:
+            return await http.get_channel(object.id)
+        object = bot.get_emoji(object_id)
+        if object:
+            return await http.get_custom_emoji(object.guild.id, object.id),
+        object = bot.get_message(object_id)
+        if object:
+            return await http.get_message(object.channel.id, object.id)
+        object = bot.get_user(object_id)
+        if object:
+            return await http.get_user(object.id)
+
+        try:
+            return await http.get_message(ctx.channel.id, object_id)
+        except discord.NotFound:
+            pass
+        try:
+            return await http.get_channel(object_id)
+        except discord.NotFound:
+            pass
+        try:
+            return await http.get_user(object_id)
+        except discord.NotFound:
+            pass
+
+        return None
+
+    def get_type(self, ctx, data):
+
+        # we could just use get_xyz
+        # but why not construct ourselves?
+        # this will break with some types
+        # too lazy to fix that
+        state = ctx.bot._connection
+
+        if data.get('last_message_id') is not None:
+            return discord.TextChannel(state=state, guild=ctx.guild, data=data)
+        elif data.get('bitrate') is not None:
+            return discord.VoiceChannel(state=state, guild=ctx.guild, data=data)
+        elif data.get('require_colons') is not None:
+            return discord.Emoji(state=state, guild=ctx.guild, data=data)
+        elif data.get('nick') is not None:
+            return discord.Member(data=data, guild=ctx.guild, state=state)       
+        elif data.get('username') is not None:
+            return discord.User(state=state, data=data)         
+        elif data.get('content') is not None:
+            return discord.Message(state=state, channel=ctx.channel, data=data)
+
+        return None
 
     @commands.command(
         aliases=('ss', 'show ss',), help='Shows most recent socket event statistics.'
@@ -185,6 +196,7 @@ class Useful(commands.Cog):
     @commands.group(
         help='Shows raw data of different discord objects.', invoke_without_command=True, case_insensitive=True
     )
+    @commands.guild_only()
     async def raw(self, ctx):
         await ctx.send_help(ctx.command)
 
@@ -194,8 +206,7 @@ class Useful(commands.Cog):
     @commands.cooldown(1, 30, commands.BucketType.user)
     async def message(self, ctx, message_id: int, channel_id: typing.Optional[commands.TextChannelConverter]):
         if not channel_id:
-            channel_id = ctx.channel
-        channel_id = channel_id.id
+            channel_id = ctx.channel.id
 
         try:
             data = await ctx.bot.http.get_message(channel_id, message_id)
@@ -285,6 +296,30 @@ class Useful(commands.Cog):
         if not data:
             return await ctx.send(f'``{object_id}``: Not found.')
         await ctx.send(discord.utils.escape_markdown(str(data)))
+
+    @commands.group(
+        invoke_without_command=True, case_insensitive=True,
+        aliases=('c', 'con',), help='Finds and constructs a discord object from raw data.',
+    )
+    async def construct(self, ctx, *, data: RawData):
+
+        async with ctx.typing():
+            type = self.get_type(ctx, data)
+        if type is None:
+            return await ctx.send('Invalid data.')
+        await ctx.send(repr(type))
+
+    @construct.command(
+        hidden=True, name='dispatch', aliases=('d',)
+    )
+    @commands.is_owner()
+    async def _dispatch(self, ctx, *, data: RawData):
+        async with ctx.typing():
+            message = self.get_type(ctx, data)
+        if message is None or not isinstance(message, discord.Message):
+            return await ctx.send('Invalid data.')
+        ctx.bot.dispatch('message', message)
+        await ctx.message.add_reaction('\U00002705')
 
     @commands.command(aliases=('src',))
     async def source(self, ctx):

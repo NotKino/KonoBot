@@ -1,18 +1,15 @@
-import discord
-from discord.ext import commands
+import dotenv
+import logging
+import os
 
 import asyncpg
+import discord
+import jishaku
+from discord.ext import commands
 
 from utils import modles
 
-import os
-from os.path import join, dirname
-import dotenv
-import logging
-import jishaku
-
-path = join(dirname(__file__), 'bot_stuff.env')
-dotenv.load_dotenv(path)
+dotenv.load_dotenv('bot_stuff.env')
 
 
 class Kono(commands.Bot):
@@ -24,27 +21,24 @@ class Kono(commands.Bot):
             intents=kwargs.pop('intents'), **kwargs,
         )
         self.token = token
-        self.database = kwargs.pop('db')
-        self.database_user = kwargs.pop('db_user')
-        self.database_pass = kwargs.pop('db_pass')
+        self.database, self.database_user, self.database_pass = kwargs.pop('db')
 
         cogs = (
             'useful', 'nospam',
+            'jishaku',
         )
 
         logging.basicConfig(level=logging.DEBUG)
 
         for cog in cogs:
-            self.load_extension(f'cogs.{cog}')
-        self.load_extension('jishaku')
+            path = f'cogs.{cog}' if cog != 'jishaku' else 'jishaku'
+            self.load_extension(path)
 
     async def on_message_edit(self, before, after):
-        """copied"""
         if before.author.id == self.owner_id:
             await self.process_commands(after)
 
     async def on_ready(self):
-
         print('let\'s get rollin')
 
     def run(self):
@@ -55,7 +49,7 @@ class Kono(commands.Bot):
                                     password=self.database_pass,
                                     )
             )
-        except:
+        except ConnectionRefusedError:
             print('failed to connect to database')
 
         super().run(self.token)
@@ -67,9 +61,8 @@ intents.typing = False
 intents.members = True
 
 kwargs = {
-    'status': discord.Status.idle, 'intents': intents,
-    'prefix': 'kono ', 'db': os.environ.get('DB'),
-    'db_user': os.environ.get('DB_USER'), 'db_pass': os.environ.get('DB_PASS'),
+    'status': discord.Status.idle, 'intents': intents, 'prefix': 'kono ',
+    'db': (os.environ.get('DB'), os.environ.get('DB_USER'), os.environ.get('DB_PASS'))
 }
 
 Kono(os.environ.get('TOKEN'), **kwargs).run()

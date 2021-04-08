@@ -1,11 +1,11 @@
-import discord
-from discord.ext import commands
-
+import ast
+from collections import OrderedDict
 import datetime
 import time
-
-import ast
 import typing
+
+import discord
+from discord.ext import commands
 
 
 class SocketTime:
@@ -31,26 +31,34 @@ class SocketTime:
         return cls(time)
 
 
-class DiscordDispatch(commands.Converter):
+class SocketEvent(commands.Converter):
     # idk what to call this
     async def convert(self, ctx, argument):
         """Convert OPCode"""
-        self._response_cache = ctx.cog._response_cache
+        self._responses = ctx.cog._responses
 
-        if argument in ('recent', 'r'):
-            return argument
+        event = self._responses.get(int(argument))
 
-        for response in self._response_cache:
-
-            if argument == str(response['s']):
-                return self._response_cache[int(argument) - 1]
+        if event:
+            return event
 
         raise Exception(
-            f'invalid sequence number\nthere are {len(self._response_cache)} events in cache')
+            f'invalid sequence number\nthere are {len(self._responses)} events in cache')
+
+
+class SocketType(commands.Converter):
+    async def convert(self, ctx, argument):
+
+        if argument in ctx.bot._connection.parsers.keys():
+            return argument
+
+        raise Exception(
+            f'invalid event type')
+
 
 class RawData(commands.Converter):
     async def convert(self, ctx, argument):
-        
+
         try:
             return ast.literal_eval(argument)
         except SyntaxError:
@@ -58,11 +66,12 @@ class RawData(commands.Converter):
                 'Invalid raw data.'
             )
 
+
 class Useful(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self._response_cache = list()
+        self._responses = OrderedDict()
 
     async def cog_command_error(self, ctx, error):
 
@@ -75,20 +84,15 @@ class Useful(commands.Cog):
         else:
             raise error
 
-    @commands.Cog.listener('on_disconnect')
-    async def cache_clear(self):
-        """Clear cache if ws discconnect."""
-        # Disconnect might fuck up our sequence
-        self._response_cache = list()
-
     @commands.Cog.listener('on_socket_response')
-    async def socket_listener(self, message):
-        """Listen for socket events, append to cache"""
-        if message['op'] != 0:
+    async def socket_listener(self, data):
+        """Listen for socket events, add to cache"""
+        if data['op'] != 0:
             return
-        message['when'] = time.time()
-        self._response_cache.append(message)
+        s = data.get('s')
 
+        data['when'] = time.time()
+        self._responses[s] = data
 
     async def find_type(self, ctx, object_id):
 
@@ -108,7 +112,7 @@ class Useful(commands.Cog):
         object = bot.get_emoji(object_id)
         if object:
             return await http.get_custom_emoji(object.guild.id, object.id),
-        object = bot.get_message(object_id)
+        object = ctx.get_message(object_id)
         if object:
             return await http.get_message(object.channel.id, object.id)
         object = bot.get_user(object_id)
@@ -132,8 +136,6 @@ class Useful(commands.Cog):
 
     def get_type(self, ctx, data):
 
-        # we could just use get_xyz
-        # but why not construct ourselves?
         # this will break with some types
         # too lazy to fix that
         state = ctx.bot._connection
@@ -145,30 +147,33 @@ class Useful(commands.Cog):
         elif data.get('require_colons') is not None:
             return discord.Emoji(state=state, guild=ctx.guild, data=data)
         elif data.get('nick') is not None:
-            return discord.Member(data=data, guild=ctx.guild, state=state)       
+            return discord.Member(data=data, guild=ctx.guild, state=state)
         elif data.get('username') is not None:
-            return discord.User(state=state, data=data)         
+            return discord.User(state=state, data=data)
         elif data.get('content') is not None:
             return discord.Message(state=state, channel=ctx.channel, data=data)
+        elif data.get('emoji') is not None:
+            pass
 
         return None
 
-    @commands.command(
-        aliases=('ss', 'show ss',), help='Shows most recent socket event statistics.'
+    @commands.group(
+        aliases=('ss', 'show ss',), help='Shows most recent socket event statistics.',
+        invoke_without_command=True, case_insensitive=True,
     )
-    async def socketstats(self, ctx, response: DiscordDispatch = None):
+    async def socketstats(self, ctx, response: SocketEvent = None):
         # horrid
 
-        if response is None:
+        if not response:
             try:
-                response = self._response_cache[-2]
+                response = self._responses[list(self._responses)[-2]]
             except IndexError:
                 # this should never happen
-                await ctx.send('no events in cache')
+                return await ctx.send('no events in cache')
 
         elif response in ('recent', 'r'):
             stuff, loop = str(), int()
-            for event in self._response_cache[::-1]:
+            for event in list(self._responses)[::-1]:
                 if loop == 6:
                     break
                 else:
@@ -193,8 +198,48 @@ class Useful(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @socketstats.command(
+        help='Constructs a discord object from most recent socket event statistics.', aliases=('sc', 'c')
+    )
+    async def socket_construct(self, ctx, *, response: SocketEvent = None):
+
+        if not response:
+            try:
+                response = self._responses[list(self._responses)[-2]]
+            except IndexError:
+                return await ctx.send('No events in cache')
+
+        data = response.get('d')
+
+        if not data:
+            return await ctx.send('No data from this event.')
+
+        async with ctx.typing():
+            type = self.get_type(ctx, data)
+        if type is None:
+            return await ctx.send(f'Could not construct for type: {response["t"]}')
+        await ctx.send(repr(type))
+
+    @socketstats.command(
+        help='Shows recent events with specified type.', aliases=('s',)
+    )
+    async def show(self, ctx, type: SocketType):
+
+        found = list()
+
+        for seq, data in self._responses.items():
+            if data['t'] == type:
+                found.append(seq)
+
+        output = f'```\n{type}: {", ".join(str(seq) for seq in found)}\n```'
+
+        if len(output) > 2000:
+            output = f'```\n{type}: {", ".join(str(seq) for seq in found[-20])}\n```'
+
+        await ctx.send(output)
+
     @commands.group(
-        help='Shows raw data of different discord objects.', invoke_without_command=True, case_insensitive=True
+        help='Shows raw data of different discord objects.', invoke_without_command=True, case_insensitive=True,
     )
     @commands.guild_only()
     async def raw(self, ctx):
@@ -286,7 +331,7 @@ class Useful(commands.Cog):
             await ctx.send(discord.utils.escape_markdown(str(data)))
 
     @raw.command(
-        aliases=('f', 'search', 's',), help='Retrives raw data of a channel/emoji/message/user object.\nThe object\'s ID must be passed.',
+        aliases=('f', 'search', 'get',), help='Retrives raw data of a channel/emoji/message/user object.\nThe object\'s ID must be passed.',
     )
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def find(self, ctx, object_id: int):
@@ -297,9 +342,22 @@ class Useful(commands.Cog):
             return await ctx.send(f'``{object_id}``: Not found.')
         await ctx.send(discord.utils.escape_markdown(str(data)))
 
+    @raw.command(
+        aliases=('s', 'sock',), help='Retrives raw data of a websocket event.\nThe event\'s sequence may be passed'
+    )
+    async def socket(self, ctx, *, response: SocketEvent = None):
+
+        if not response:
+            try:
+                response = self._responses[list(self._responses)[-2]]
+            except IndexError:
+                return await ctx.send('No events in cache')
+
+        await ctx.send(discord.utils.escape_markdown(response))
+
     @commands.group(
         invoke_without_command=True, case_insensitive=True,
-        aliases=('c', 'con',), help='Finds and constructs a discord object from raw data.',
+        aliases=('c', 'con',), help='Constructs a discord object from raw data.',
     )
     async def construct(self, ctx, *, data: RawData):
 

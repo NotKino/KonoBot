@@ -1,6 +1,5 @@
 import ast
 from collections import OrderedDict
-import datetime
 import time
 import typing
 
@@ -53,7 +52,7 @@ class SocketType(commands.Converter):
             return argument
 
         raise Exception(
-            f'invalid event type')
+            'invalid event type')
 
 
 class RawData(commands.Converter):

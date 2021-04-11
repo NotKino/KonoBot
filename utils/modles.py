@@ -4,7 +4,7 @@ import time
 
 def get_message(self, message_id):
 
-    return self._state._get_message(message_id)
+    return self._connection._get_message(message_id)
 
 
 async def latency(self):

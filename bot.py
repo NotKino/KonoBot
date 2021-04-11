@@ -1,15 +1,16 @@
-import dotenv
-import logging
-import os
 
-import asyncpg
-import discord
+import logging
+from os import environ
+from dotenv import load_dotenv
+
 import jishaku
+from asyncpg import create_pool
+from discord import HTTPException, Intents, Status
 from discord.ext import commands
 
-from utils import modles
+import utils
 
-dotenv.load_dotenv('bot_stuff.env')
+load_dotenv('bot_stuff.env')
 
 
 class Kono(commands.Bot):
@@ -20,8 +21,10 @@ class Kono(commands.Bot):
             status=kwargs.pop('status'), chunk_guilds_at_startup=False,
             intents=kwargs.pop('intents'), **kwargs,
         )
+        self._before_invoke = self.before_invoke_hook
         self.token = token
-        self.database, self.database_user, self.database_pass = kwargs.pop('db')
+        self.database, self.database_user, self.database_pass = kwargs.pop(
+            'db')
 
         cogs = (
             'useful', 'nospam',
@@ -34,6 +37,12 @@ class Kono(commands.Bot):
             path = f'cogs.{cog}' if cog != 'jishaku' else 'jishaku'
             self.load_extension(path)
 
+    async def before_invoke_hook(self, ctx):
+        try:
+            await ctx.trigger_typing()
+        except HTTPException:
+            pass
+
     async def on_message_edit(self, before, after):
         if before.author.id == self.owner_id:
             await self.process_commands(after)
@@ -43,11 +52,11 @@ class Kono(commands.Bot):
 
     def run(self):
         try:
-            self.db_pool = self.loop.run_until_complete(
-                asyncpg.create_pool(database=self.database,
-                                    user=self.database_user,
-                                    password=self.database_pass,
-                                    )
+            self.pool = self.loop.run_until_complete(
+                create_pool(database=self.database,
+                            user=self.database_user,
+                            password=self.database_pass,
+                            )
             )
         except ConnectionRefusedError:
             print('failed to connect to database')
@@ -55,14 +64,14 @@ class Kono(commands.Bot):
         super().run(self.token)
 
 
-intents = discord.Intents.default()
+intents = Intents.default()
 intents.voice_states = False
 intents.typing = False
 intents.members = True
 
 kwargs = {
-    'status': discord.Status.idle, 'intents': intents, 'prefix': 'kono ',
-    'db': (os.environ.get('DB'), os.environ.get('DB_USER'), os.environ.get('DB_PASS'))
+    'status': Status.idle, 'intents': intents, 'prefix': 'kono ',
+    'db': (environ.get('DB'), environ.get('DB_USER'), environ.get('DB_PASS'))
 }
 
-Kono(os.environ.get('TOKEN'), **kwargs).run()
+Kono(environ.get('TOKEN'), **kwargs).run()

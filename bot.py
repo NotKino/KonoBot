@@ -21,10 +21,9 @@ class Kono(commands.Bot):
             status=kwargs.pop('status'), chunk_guilds_at_startup=False,
             intents=kwargs.pop('intents'), **kwargs,
         )
-        self._before_invoke = self.before_invoke_hook
         self.token = token
-        self.database, self.database_user, self.database_pass = kwargs.pop(
-            'db')
+        self.database, self.database_user, self.database_pass = kwargs.pop('db')
+        self._before_invoke = self.before_invoke_hook
 
         cogs = (
             'useful', 'nospam',
@@ -39,8 +38,9 @@ class Kono(commands.Bot):
 
     async def before_invoke_hook(self, ctx):
         try:
-            await ctx.trigger_typing()
-        except HTTPException:
+            if ctx.command.cog.qualified_name != 'Jishaku':
+                await ctx.trigger_typing()
+        except (HTTPException, AttributeError):
             pass
 
     async def on_message_edit(self, before, after):
@@ -49,6 +49,11 @@ class Kono(commands.Bot):
 
     async def on_ready(self):
         print('let\'s get rollin')
+
+    async def close(self):
+        if hasattr(self, 'pool'):
+            await self.pool.close()
+        await super().close()
 
     def run(self):
         try:
@@ -67,7 +72,7 @@ class Kono(commands.Bot):
 intents = Intents.default()
 intents.voice_states = False
 intents.typing = False
-intents.members = True
+intents.members = False
 
 kwargs = {
     'status': Status.idle, 'intents': intents, 'prefix': 'kono ',
